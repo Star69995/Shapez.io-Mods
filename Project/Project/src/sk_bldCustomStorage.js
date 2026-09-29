@@ -1,13 +1,11 @@
 ﻿// @ts-nocheck
 const METADATA = {
     website: "https://steamcommunity.com/id/Skrip037/",
-    author: "Skrip",
-    name: "Custom Storage",
-    version: "1.3.2",
+    author: "Star",
+    name: "Custom Storage v2",
+    version: "2.0.2",
     id: "sk-custom-storage",
-    description:
-        "Adds a new building which allows a custom storage limit.",
-
+    description: "Adds a new building which allows a custom storage limit. Based on Custom Storage mod, with improved code and logic.",
     minimumGameVersion: ">=1.5.0",
     modId: "1858712",
 };
@@ -20,7 +18,6 @@ const enumCustomStorageVariant = {
 
 ////////////////////////////////////////////////////////////////////////
 class CustomStorageComponent extends shapez.Component {
-
     static getId() {
         return "CustomStorage";
     }
@@ -36,22 +33,62 @@ class CustomStorageComponent extends shapez.Component {
         super();
         this.CustomStorageText = "";
         this.CustomStorageVariant = csVariant;
+        this._cachedValue = null;
+        this.isCopied = false;
+    }
+
+    // This is the secret method from the Teleporter mod!
+    // It copies the exact values when using Pipette or Blueprints.
+    copyAdditionalStateTo(otherComponent) {
+        // 1. Copy the text ("∞" or "500")
+        otherComponent.CustomStorageText = this.CustomStorageText;
+
+        // 2. Force the update() loop to push the text value into the physical storage
+        otherComponent._cachedValue = null;
+
+        // 3. Prevent the popup dialog from showing up
+        otherComponent.isCopied = true;
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////
 class CustomStorageSystem extends shapez.GameSystemWithFilter {
     constructor(root) {
         super(root, [CustomStorageComponent]);
 
-        // Ask for a notification text once an entity is placed
         this.root.signals.entityManuallyPlaced.add(entity => {
-            const editorHud = this.root.hud.parts.CustomStorageEdit;
-            if (editorHud) {
-                editorHud.editStorageAmount(entity, { deleteOnCancel: true });
+            const csComp = entity.components.CustomStorage;
+
+            if (csComp && !csComp.isCopied && csComp.CustomStorageText === "") {
+                const editorHud = this.root.hud.parts.CustomStorageEdit;
+                if (editorHud) {
+                    editorHud.editStorageAmount(entity, { deleteOnCancel: true });
+                }
             }
         });
+    }
+
+    // NEW: update() runs in the background for all buildings, even if off-screen!
+    update() {
+        for (let i = 0; i < this.allEntities.length; ++i) {
+            const entity = this.allEntities[i];
+            const csComp = entity.components.CustomStorage;
+
+            // If the value hasn't been applied yet (from a save file or paste)
+            if (csComp && csComp._cachedValue === null && csComp.CustomStorageText !== "") {
+                if (csComp.CustomStorageText === "∞") {
+                    csComp._cachedValue = Number.MAX_SAFE_INTEGER;
+                } else {
+                    let parsed = parseInt(csComp.CustomStorageText);
+                    csComp._cachedValue = isNaN(parsed) ? 100 : parsed;
+                }
+
+                // Apply it to the physical storage component immediately
+                if (entity.components.Storage) {
+                    entity.components.Storage.maximumStorage = csComp._cachedValue;
+                }
+            }
+        }
     }
 
     drawChunk(parameters, chunk) {
@@ -59,6 +96,7 @@ class CustomStorageSystem extends shapez.GameSystemWithFilter {
         for (let i = 0; i < contents.length; ++i) {
             const entity = contents[i];
             const CustomStorageComp = entity.components.CustomStorage;
+
             if (!CustomStorageComp) {
                 continue;
             }
@@ -67,27 +105,26 @@ class CustomStorageSystem extends shapez.GameSystemWithFilter {
             const context = parameters.context;
             const center = staticComp.getTileSpaceBounds().getCenter().toWorldSpace();
 
-            if (entity && entity.components.Storage.maximumStorage === 0) {
-                entity.components.Storage.maximumStorage = parseInt(CustomStorageComp.CustomStorageText);
-            }
-
-            if (parameters.visibleRect.containsCircle(center.x, center.y, 40)) {
-                let size = CustomStorageComp.CustomStorageText.length
+            // ONLY drawing happens here now (much better performance!)
+            if (parameters.visibleRect.containsCircle(center.x, center.y, 40) && CustomStorageComp.CustomStorageText !== "") {
+                let text = CustomStorageComp.CustomStorageText;
+                let size = text.length;
 
                 context.fillStyle = "rgba(250, 250, 250, 0.8)";
                 context.beginRoundedRect(center.x - size * 4 / 2, center.y + 9, size * 4, 8, 2);
-
                 context.fill();
+
                 context.fillStyle = "blue";
                 context.textAlign = "center";
                 context.font = "7px GameFont";
-                context.fillText(CustomStorageComp.CustomStorageText, center.x, center.y + 16);
+                context.fillText(text, center.x, center.y + 16);
 
-                if (parseInt(CustomStorageComp.CustomStorageText) <= entity.components.Storage.storedCount) {
+                let isInfinity = text === "∞";
+                if (!isInfinity && CustomStorageComp._cachedValue > 0 && CustomStorageComp._cachedValue <= entity.components.Storage.storedCount) {
                     context.fillStyle = "rgba(250, 250, 250, 0.8)";
                     context.beginRoundedRect(center.x - 4 * 4 / 2, center.y - 24, 4 * 4, 8, 2);
-
                     context.fill();
+
                     context.fillStyle = "red";
                     context.textAlign = "center";
                     context.font = "7px GameFont";
@@ -109,7 +146,6 @@ class MetaCustomStorageBuilding extends shapez.ModMetaBuilding {
                 name: "Custom Storage",
                 description: "Allows the player to set the maximum storage amount.",
                 variant: shapez.defaultBuildingVariant,
-
                 regularImageBase64: RESOURCES.custom_storage.base,
                 blueprintImageBase64: RESOURCES.custom_storage.blueprint,
                 tutorialImageBase64: RESOURCES.custom_storage.base,
@@ -118,7 +154,6 @@ class MetaCustomStorageBuilding extends shapez.ModMetaBuilding {
                 name: "Custom Storage (Mirrored)",
                 description: "Allows the player to set the maximum storage amount.",
                 variant: enumCustomStorageVariant.Mirrored,
-
                 regularImageBase64: RESOURCES.custom_storage.mirrored,
                 blueprintImageBase64: RESOURCES.custom_storage.blueprint_mirrored,
                 tutorialImageBase64: RESOURCES.custom_storage.mirrored,
@@ -134,48 +169,23 @@ class MetaCustomStorageBuilding extends shapez.ModMetaBuilding {
         try {
             const csVar = enumCustomStorageVariant[variant];
             entity.components.CustomStorage.CustomStorageVariant = csVar;
-        }
-        catch (error) {
-
-        }
+        } catch (error) { }
 
         const ejectorComposition = entity.components.ItemEjector;
 
         switch (variant) {
             case shapez.defaultBuildingVariant:
-                ejectorComposition.setSlots([{
-                    pos: new shapez.Vector(0, 0),
-                    direction: shapez.enumDirection.top
-                },
-                {
-                    pos: new shapez.Vector(1, 0),
-                    direction: shapez.enumDirection.top,
-                    },
-                ]);
-                break;
             case enumCustomStorageVariant.Normal:
-                ejectorComposition.setSlots([{
-                    pos: new shapez.Vector(0, 0),
-                    direction: shapez.enumDirection.top
-                },
-                {
-                    pos: new shapez.Vector(1, 0),
-                    direction: shapez.enumDirection.top,
-                },
+                ejectorComposition.setSlots([
+                    { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.top },
+                    { pos: new shapez.Vector(1, 0), direction: shapez.enumDirection.top },
                 ]);
                 break;
             case enumCustomStorageVariant.Mirrored:
-                ejectorComposition.setSlots([{
-                    pos: new shapez.Vector(1, 0),
-                    direction: shapez.enumDirection.top
-                },
-                {
-                    pos: new shapez.Vector(0, 0),
-                    direction: shapez.enumDirection.top,
-                },
+                ejectorComposition.setSlots([
+                    { pos: new shapez.Vector(1, 0), direction: shapez.enumDirection.top },
+                    { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.top },
                 ]);
-                break;
-            default:
                 break;
         }
     }
@@ -184,132 +194,72 @@ class MetaCustomStorageBuilding extends shapez.ModMetaBuilding {
         return "#bbdf6d";
     }
 
-    /**
-     * @returns {Array<[string, string]>}
-     */
-    //getAdditionalStatistics(root, variant) {
-    //    return [[T.ingame.buildingPlacement.infoTexts.storage, formatBigNumber(storageSize)]];
-    //}
-
     getDimensions() {
         return new shapez.Vector(2, 2);
     }
 
-    /**
-     * @param {GameRoot} root
-     */
     getIsUnlocked(root) {
         return root.hubGoals.isRewardUnlocked(shapez.enumHubGoalRewards.reward_storage);
-        //return true;
     }
 
-    /**
-     * Creates the entity at the given location
-     * @param {Entity} entity
-     */
     setupEntityComponents(entity) {
-        //Required, since the item processor needs this.
-        entity.addComponent(
-            new shapez.ItemEjectorComponent({
-                slots: [
-                ],
-            })
-        );
-
-        entity.addComponent(
-            new shapez.ItemAcceptorComponent({
-                slots: [
-                    {
-                        pos: new shapez.Vector(0, 1),
-                        direction: shapez.enumDirection.bottom,
-                    },
-                    {
-                        pos: new shapez.Vector(1, 1),
-                        direction: shapez.enumDirection.bottom,
-                    },
-                ],
-            })
-        );
-
-        entity.addComponent(
-            new shapez.WiredPinsComponent({
-                slots: [
-                    {
-                        pos: new shapez.Vector(1, 1),
-                        direction: shapez.enumDirection.right,
-                        type: shapez.enumPinSlotType.logicalEjector,
-                    },
-                    {
-                        pos: new shapez.Vector(0, 1),
-                        direction: shapez.enumDirection.left,
-                        type: shapez.enumPinSlotType.logicalEjector,
-                    },
-                ],
-            })
-        );
-
+        entity.addComponent(new shapez.ItemEjectorComponent({ slots: [] }));
+        entity.addComponent(new shapez.ItemAcceptorComponent({
+            slots: [
+                { pos: new shapez.Vector(0, 1), direction: shapez.enumDirection.bottom },
+                { pos: new shapez.Vector(1, 1), direction: shapez.enumDirection.bottom },
+            ],
+        }));
+        entity.addComponent(new shapez.WiredPinsComponent({
+            slots: [
+                { pos: new shapez.Vector(1, 1), direction: shapez.enumDirection.right, type: shapez.enumPinSlotType.logicalEjector },
+                { pos: new shapez.Vector(0, 1), direction: shapez.enumDirection.left, type: shapez.enumPinSlotType.logicalEjector },
+            ],
+        }));
         entity.addComponent(new CustomStorageComponent());
-
-        entity.addComponent(
-            new shapez.StorageComponent({
-                maximumStorage: 0,
-            })
-        );
+        entity.addComponent(new shapez.StorageComponent({ maximumStorage: 100 })); // הותאם לברירת המחדל
     }
 }
 
 ////////////////////////////////////////////////////////////////////////
-// HUD Component to be able to edit notification blocks by clicking them
 class HUDCustomStorageEdit extends shapez.BaseHUDPart {
     initialize() {
         this.root.camera.downPreHandler.add(this.downPreHandler, this);
     }
 
-    /**
-     * @param {Vector} pos
-     * @param {enumMouseButton} button
-     */
     downPreHandler(pos, button) {
-
         const tile = this.root.camera.screenToWorld(pos).toTileSpace();
         const contents = this.root.map.getLayerContentXY(tile.x, tile.y, "regular");
         if (contents) {
             const customStorageComp = contents.components.CustomStorage;
-            if (customStorageComp) {
-                if (button === shapez.enumMouseButton.left) {
-                    this.editStorageAmount(contents, {
-                        deleteOnCancel: false,
-                    });
-                    return shapez.STOP_PROPAGATION;
-                }
+            if (customStorageComp && button === shapez.enumMouseButton.left) {
+                this.editStorageAmount(contents, { deleteOnCancel: false });
+                return shapez.STOP_PROPAGATION;
             }
         }
     }
 
-    /**
-     * Asks the player to enter a notification text
-     * @param {Entity} entity
-     * @param {object} param0
-     * @param {boolean=} param0.deleteOnCancel
-     */
     editStorageAmount(entity, { deleteOnCancel = true }) {
         const customStorageComp = entity.components.CustomStorage;
-        if (!customStorageComp) {
-            return;
-        }
+        if (!customStorageComp) return;
 
-        // save the uid because it could get stale
         const uid = entity.uid;
 
-        // create an input field to query the text
+        // Set the default value of the text box
+        let startValue = customStorageComp.CustomStorageText;
+        if (startValue === "NEW") {
+            startValue = "100"; // Give the user 100 as the default text to easily press Enter
+        } else if (startValue === "∞") {
+            startValue = ""; // Leave empty so they know empty means Infinity
+        }
+
         const intInput = new shapez.FormElementInput({
             id: "CustomStorageText",
-            placeholder: "1 - 99999",
-            defaultValue: customStorageComp.CustomStorageText,
-            validator: val => val.length > 0 && parseInt(val) > 0 && parseInt(val) <= 99999,
+            placeholder: "Leave empty for ∞, or type 1-99999",
+            defaultValue: startValue,
+            validator: val => val.trim() === "" || (parseInt(val) > 0 && parseInt(val) <= 99999),
         });
-        console.log(customStorageComp.perSec)
-        // create the dialog & show it
+
         const dialog = new shapez.DialogWithForm({
             app: this.root.app,
             title: shapez.T.mods.CustomStorage.title,
@@ -320,50 +270,31 @@ class HUDCustomStorageEdit extends shapez.BaseHUDPart {
         });
         this.root.hud.parts.dialogs.internalShowDialog(dialog);
 
-        // When confirmed, set the text
         dialog.buttonSignals.ok.add(() => {
-            if (!this.root || !this.root.entityMgr) {
-                // Game got stopped
-                return;
-            }
-
+            if (!this.root || !this.root.entityMgr) return;
             const entityRef = this.root.entityMgr.findByUid(uid, false);
-            if (!entityRef) {
-                // outdated
-                return;
+            if (!entityRef) return;
+            const comp = entityRef.components.CustomStorage;
+            if (!comp) return;
+
+            let inputVal = intInput.getValue().trim();
+
+            if (inputVal === "") {
+                comp.CustomStorageText = "∞";
+                comp._cachedValue = Number.MAX_SAFE_INTEGER;
+            } else {
+                comp.CustomStorageText = inputVal;
+                comp._cachedValue = parseInt(inputVal);
             }
 
-            const customStorageComp = entityRef.components.CustomStorage;
-            if (!customStorageComp) {
-                // no longer interesting
-                return;
-            }
-
-            // set the values
-            customStorageComp.CustomStorageText = intInput.getValue();
-            entity.components.Storage.maximumStorage = parseInt(intInput.getValue());
+            entityRef.components.Storage.maximumStorage = comp._cachedValue;
         });
 
-        // When cancelled, destroy the entity again
         if (deleteOnCancel) {
             dialog.buttonSignals.cancel.add(() => {
-                if (!this.root || !this.root.entityMgr) {
-                    // Game got stopped
-                    return;
-                }
-
+                if (!this.root || !this.root.entityMgr) return;
                 const entityRef = this.root.entityMgr.findByUid(uid, false);
-                if (!entityRef) {
-                    // outdated
-                    return;
-                }
-
-                const customStorageComp = entityRef.components.CustomStorage;
-                if (!customStorageComp) {
-                    // no longer interesting
-                    return;
-                }
-
+                if (!entityRef || !entityRef.components.CustomStorage) return;
                 this.root.logic.tryDeleteBuilding(entityRef);
             });
         }
@@ -373,13 +304,11 @@ class HUDCustomStorageEdit extends shapez.BaseHUDPart {
 class Mod extends shapez.Mod {
     init() {
         this.modInterface.registerComponent(CustomStorageComponent);
-        // Register the new building
         this.modInterface.registerNewBuilding({
             metaClass: MetaCustomStorageBuilding,
             buildingIconBase64: RESOURCES.custom_storage.icon,
         });
 
-        // Add it to the regular toolbar
         this.modInterface.addNewBuildingToToolbar({
             toolbar: "regular",
             location: "secondary",
@@ -398,12 +327,9 @@ class Mod extends shapez.Mod {
         this.modInterface.registerTranslations("en", {
             mods: {
                 CustomStorage: {
-                    description:
-                        "Allows the player to set the maximum storage amount.",
-                    dialogText:
-                        "Enter the maximum storage amount for this building.",
-                    title:
-                        "Custom Storage Building",
+                    description: "Allows the player to set the maximum storage amount.",
+                    dialogText: "Enter storage amount. (Leave the box empty for ∞)",
+                    title: "Custom Storage Building",
                 },
             },
         });
