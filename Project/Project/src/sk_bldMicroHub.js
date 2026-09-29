@@ -3,7 +3,7 @@ const METADATA = {
     website: "https://steamcommunity.com/id/Skrip037/",
     author: "Skrip",
     name: "Micro Hub",
-    version: "1.1.0",
+    version: "1.1.1",
     id: "sk-hub-building",
     description:
         "Adds a new building which allows you to send shapes into the hub.",
@@ -215,7 +215,7 @@ class SkHubSystem extends shapez.GameSystemWithFilter {
 
     update() {
         if (METADATA.settings.outputGoalShape) {
-            for (x = 0; x < this.allEntities.length; ++x) {
+            for (let x = 0; x < this.allEntities.length; ++x) {
                 this.allEntities[x].components.WiredPins.slots[0].value =
                     this.root.shapeDefinitionMgr.getShapeItemFromShortKey(this.root.hubGoals.currentGoal.definition.getHash());
             }
