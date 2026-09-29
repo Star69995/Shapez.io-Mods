@@ -3,17 +3,17 @@ const METADATA = {
     website: "https://steamcommunity.com/id/Skrip037/",
     author: "Skrip",
     name: "Micro Hub",
-    version: "1.1.1",
+    version: "1.1.3",
     id: "sk-hub-building",
     description:
-        "Adds a new building which allows you to send shapes into the hub.",
+        "Adds a new building which allows you to send shapes into the hub. SQ-X compatible.",
 
     minimumGameVersion: ">=1.5.0",
     modId: "1863722",
 
     settings: {
         enabledAtLevel1: true, // Default false // True = Building is available at level 1 / False = Building is available along with the wires reward
-        outputGoalShape: false, // Default false // True = Wire output enabled. This outputs the goal shape. / False = No wire output
+        outputGoalShape: true, // Default false // True = Wire output enabled. This outputs the goal shape. / False = No wire output
     }
 };
 
@@ -51,6 +51,10 @@ class MetaHubBuilding extends shapez.ModMetaBuilding {
                 tutorialImageBase64: RESOURCES.shub.tutorial,
             },
         ];
+    }
+
+    isRotateable() {
+        return false;
     }
 
     getSilhouetteColor() {
@@ -113,12 +117,12 @@ class MetaHubBuilding extends shapez.ModMetaBuilding {
                     break;
                 case enumHubSize.Single:
                     var slots = [];
-                        slots.push(
-                            { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.top, filter: "shape" },
-                            { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.bottom, filter: "shape" },
-                            { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.left, filter: "shape" },
-                            { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.right, filter: "shape" }
-                        );
+                    slots.push(
+                        { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.top, filter: "shape" },
+                        { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.bottom, filter: "shape" },
+                        { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.left, filter: "shape" },
+                        { pos: new shapez.Vector(0, 0), direction: shapez.enumDirection.right, filter: "shape" }
+                    );
                     acceptorComposition.setSlots(slots);
                     break;
                 default:
@@ -159,6 +163,7 @@ class MetaHubBuilding extends shapez.ModMetaBuilding {
             new shapez.ItemProcessorComponent({
                 inputsPerCharge: 1,
                 processorType: shapez.enumItemProcessorTypes.hub,
+                processingRequirement: shapez.enumItemProcessorRequirements.hub,
             })
         );
 
@@ -211,9 +216,73 @@ class SkHubComponent extends shapez.Component {
 class SkHubSystem extends shapez.GameSystemWithFilter {
     constructor(root) {
         super(root, [SkHubComponent]);
+        this.overlaysPatchApplied = false;
+    }
+
+    _patchOverlaysSystem() {
+        const systems = this.root.systemMgr.systems;
+        let overlaysSystem = null;
+        for (const id in systems) {
+            if (typeof systems[id].drawHubDeliverSlotRequirement === "function") {
+                overlaysSystem = systems[id];
+                break;
+            }
+        }
+        if (!overlaysSystem) return;
+
+        const original = overlaysSystem.drawHubDeliverSlotRequirement.bind(overlaysSystem);
+        const dirOrder = [
+            shapez.enumDirection.top,
+            shapez.enumDirection.right,
+            shapez.enumDirection.bottom,
+            shapez.enumDirection.left,
+        ];
+        const biasMap = {
+            [shapez.enumDirection.top]:    new shapez.Vector(0, -1),
+            [shapez.enumDirection.right]:  new shapez.Vector(1, 0),
+            [shapez.enumDirection.bottom]: new shapez.Vector(0, 1),
+            [shapez.enumDirection.left]:   new shapez.Vector(-1, 0),
+        };
+
+        overlaysSystem.drawHubDeliverSlotRequirement = function(parameters, entity) {
+            if (!entity.components.SkHub) {
+                return original(parameters, entity);
+            }
+            const staticComp = entity.components.StaticMapEntity;
+            const acceptorComp = entity.components.ItemAcceptor;
+            const now = this.root.time.now();
+            const rotation = staticComp.rotation;
+            const steps = (rotation / 90) | 0;
+
+            for (let i = 0; i < acceptorComp.slots.length; ++i) {
+                const slot = acceptorComp.slots[i];
+                if (now < slot.showDisableDDL) {
+                    const worldPos = staticComp.origin.add(
+                        slot.pos.rotateFastMultipleOf90(rotation)
+                    );
+                    const worldDir = dirOrder[(dirOrder.indexOf(slot.direction) + steps) % 4];
+                    const bias = biasMap[worldDir];
+
+                    const pulse = shapez.smoothPulse(this.root.time.now());
+                    parameters.context.globalAlpha = 0.6 + 0.4 * pulse;
+                    this.spriteDisabled.drawCachedCentered(
+                        parameters,
+                        (worldPos.x + bias.x + 0.5) * shapez.globalConfig.tileSize,
+                        (worldPos.y + bias.y + 0.5) * shapez.globalConfig.tileSize,
+                        shapez.globalConfig.tileSize * (0.7 + 0.2 * pulse)
+                    );
+                }
+            }
+            parameters.context.globalAlpha = 1;
+        };
     }
 
     update() {
+        if (!this.overlaysPatchApplied) {
+            this.overlaysPatchApplied = true;
+            this._patchOverlaysSystem();
+        }
+
         if (METADATA.settings.outputGoalShape) {
             for (let x = 0; x < this.allEntities.length; ++x) {
                 this.allEntities[x].components.WiredPins.slots[0].value =
